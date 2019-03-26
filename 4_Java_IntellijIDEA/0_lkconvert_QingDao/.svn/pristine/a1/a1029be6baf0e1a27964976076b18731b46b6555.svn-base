@@ -1,0 +1,447 @@
+package com.rs;
+
+import com.vividsolutions.jts.geom.Coordinate;
+import com.vividsolutions.jts.geom.Geometry;
+import com.vividsolutions.jts.math.Vector2D;
+import org.geotools.data.FileDataStoreFinder;
+import org.geotools.data.shapefile.ShapefileDataStore;
+import org.geotools.data.simple.SimpleFeatureIterator;
+import org.geotools.data.simple.SimpleFeatureSource;
+import org.opengis.feature.simple.SimpleFeature;
+
+import java.io.*;
+import java.nio.charset.Charset;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+
+import static java.lang.Math.atan;
+import static java.lang.Math.log;
+import static java.lang.Math.tan;
+import static java.lang.StrictMath.exp;
+
+/**
+ * Created by cwj
+ * Date: 2018/8/10 0010
+ * Modified by cwj
+ * Date: 2018/8/10 0010
+ * Abstract:
+ */
+
+public class rsConverter {
+    public static final double M_PI = 3.14159265358979323846;
+
+    /**
+     * @param lat
+     * @param lon
+     * @return
+     * 利用米勒投影计算，经纬度坐标转平面坐标
+     */
+    public static double[] millierConvert2XY(double lat, double lon){
+        double L = 6381372 * M_PI * 2;//地球周长
+        double W = L;// 平面展开后，x轴等于周长
+        double H = L / 2;// y轴约等于周长一半
+        double mill = 2.3;// 米勒投影中的一个常数，范围大约在正负2.3之间
+        double x = lon * M_PI / 180;// 将经度从度数转换为弧度
+        double y = lat * M_PI / 180;// 将纬度从度数转换为弧度
+        y = 1.25 * log(tan(0.25 * M_PI + 0.4 * y));// 米勒投影的转换
+        // 弧度转为实际距离
+        x = (W / 2) + (W / (2 * M_PI)) * x;
+        y = (H / 2) - (H / (2 * mill)) * y;
+        double[] result = new double[2];
+        result[0] = x;
+        result[1] = y;
+        return result;
+
+    }
+
+    /**
+     * @param x
+     * @param y
+     * @return
+     * 利用米勒投影计算，平面坐标转经纬度坐标
+     */
+    public static double[] millierConvert2LonLat(double x, double y){
+        double L = 6381372 * M_PI * 2;//地球周长
+        double W = L;// 平面展开后，x轴等于周长
+        double H = L / 2;// y轴约等于周长一半
+        double mill = 2.3;// 米勒投影中的一个常数，范围大约在正负2.3之间
+        double lat;
+        lat = ((H / 2 - y) * 2 * mill) / (1.25 * H);
+        lat = ((atan(exp(lat)) - 0.25 * M_PI) * 180) / (0.4 * M_PI);
+        double lon;
+        lon = (x - W / 2) * 360 / W;
+        double[] result = new double[2];
+        result[0] = lon;
+        result[1] = lat;
+        return result;
+    }
+
+    /**
+     *
+     * @param long1 经度1
+     * @param lat1 维度1
+     * @param long2 经度2
+     * @param lat2 纬度2
+     * @return
+     */
+    public static double getDistance(double long1, double lat1, double long2, double lat2) {
+        double a, b, R;
+        R = 6378137; // 地球半径
+        lat1 = lat1 * Math.PI / 180.0;
+        lat2 = lat2 * Math.PI / 180.0;
+        a = lat1 - lat2;
+        b = (long1 - long2) * Math.PI / 180.0;
+        double d;
+        double sa2, sb2;
+        sa2 = Math.sin(a / 2.0);
+        sb2 = Math.sin(b / 2.0);
+        d = 2 * R * Math.asin(Math.sqrt(sa2 * sa2 + Math.cos(lat1) * Math.cos(lat2) * sb2 * sb2));
+        return d;
+    }
+
+    /**
+     *
+     * @param lat_a 纬度1
+     * @param lng_a 经度1
+     * @param lat_b 纬度2
+     * @param lng_b 经度2
+     * @return
+     */
+    public static double getAngle(double lat_a, double lng_a, double lat_b, double lng_b) {
+
+        double y = Math.sin(lng_b-lng_a) * Math.cos(lat_b);
+        double x = Math.cos(lat_a)*Math.sin(lat_b) - Math.sin(lat_a)*Math.cos(lat_b)*Math.cos(lng_b-lng_a);
+        double brng = Math.atan2(y, x);
+
+        brng = Math.toDegrees(brng);
+        if(brng < 0)
+            brng = brng + 360;
+        return brng;
+
+    }
+
+    /**
+     * @param obj
+     * @param lstObj
+     * @return
+     * 判断集合里面是否有相同点
+     */
+    public static boolean isSamePoint(HashMap<String, Object> obj, List<HashMap<String, Object>> lstObj){
+        boolean bSame = false;
+        Coordinate cd = (Coordinate)obj.get("coordinate");
+        int cdCode = (int)obj.get("code");
+        for (int i=0; i<lstObj.size(); i++){
+            HashMap<String, Object> item = lstObj.get(i);
+            Coordinate cdItem = (Coordinate)item.get("coordinate");
+            int code = (int)item.get("code");
+            if (cdItem.equals3D(cd) && (cdCode != code)){
+                bSame = true;
+                break;
+            }
+        }
+        return  bSame;
+    }
+
+    /**
+     * @param srcCoords
+     * @param deltaDis
+     * @return
+     * 根据指定点间距，计算并插值点
+     */
+    public static Coordinate[] calcPosInterpo(Coordinate[] srcCoords, double deltaDis){
+        int nCount = srcCoords.length;
+        int i = 0;
+        double lastDis = 0;
+        ArrayList<Coordinate> allPos = new ArrayList<>();
+        allPos.add(srcCoords[0]);
+        i = 1;
+        while ( i < nCount -1){
+            Coordinate curPoint = srcCoords[i];
+            Coordinate fromPoint = allPos.get(allPos.size()-1);
+            double curDis = getDistance(curPoint.x, curPoint.y, fromPoint.x, fromPoint.y);
+            double dist = lastDis + curDis;
+            if(deltaDis >= dist){
+                lastDis = dist;
+                allPos.add(curPoint);
+                i++;
+            }
+            else{
+                double[] curArr = millierConvert2XY(curPoint.y, curPoint.x);
+                double[] fromArr = millierConvert2XY(fromPoint.y, fromPoint.x);
+
+                Vector2D vector = new Vector2D(curArr[0] - fromArr[0], curArr[1] - fromArr[1]);
+                vector = vector.normalize().multiply(deltaDis - lastDis);
+                double newX = fromArr[0];
+                double newY = fromArr[1];
+                newX += vector.getX();
+                newY += vector.getY();
+                double[] newArr = millierConvert2LonLat(newX, newY);
+                allPos.add(new Coordinate(newArr[0], newArr[1], (curPoint.z + fromPoint.z)/2));
+                lastDis = 0;
+            }
+        }
+        allPos.add(srcCoords[i]);
+
+        Coordinate[] posArrary = new Coordinate[allPos.size()];
+        posArrary = allPos.toArray(posArrary);
+        return  posArrary;
+    }
+
+    public static void convertLink2BinaryPoints(String flPath, String flTargetPath, String Encoding, int regionNum){
+        long startTime= System.currentTimeMillis();
+        int num= 0;
+
+        ShapefileDataStore dsShp = null;
+        SimpleFeatureIterator ftIter= null;
+        try {
+            dsShp = (ShapefileDataStore) FileDataStoreFinder.getDataStore(new File(flPath));
+            dsShp.setCharset(Charset.forName(Encoding));
+            SimpleFeatureSource shp = dsShp.getFeatureSource();
+            ftIter = shp.getFeatures().features();
+
+            if (ftIter == null){
+                System.out.println(String.format("打开[%s]文件出错", flPath));
+            }
+            System.out.println(String.format("打开[%s]文件成功", flPath));
+
+            // 获取所有路网线段的首尾点，用于判断提取点是否是交叉点
+            SimpleFeatureIterator ite = shp.getFeatures().features();
+            List<HashMap<String, Object>> lstObj = getBeginEndPoints(ite);
+            ite.close();
+
+            File file = new File(flTargetPath);
+            OutputStream out = new FileOutputStream(file);
+
+            int code = 1;
+            while (ftIter.hasNext()){
+                SimpleFeature ft = ftIter.next();
+                String id = ft.getID();
+                Geometry shape = (Geometry) ft.getDefaultGeometry();
+                if (shape.isEmpty()|| !(shape.isValid())){
+                    System.out.println(String.format("[%s]记录图形为空有图形无效", id));
+                    continue;
+                }
+
+                System.out.println(String.format("正在转换[%s]的记录......", id));
+                /*int code = Integer.parseInt(ft.getAttribute("CODE").toString());*/
+
+                // 对道路中心2米
+                Coordinate[] interpoCoors = calcPosInterpo(shape.getCoordinates(), 2.0);
+
+                convert2NavPoint(out, interpoCoors, regionNum, code++, lstObj);
+                num++;
+            }
+            out.close();
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            if (ftIter != null){
+                ftIter.close();
+            }
+            if (dsShp != null){
+                dsShp.dispose();
+            }
+        }
+
+        long endTime=System.currentTimeMillis();
+        System.out.println(String.format("转换[%d]记录------耗时: [%d]s", num, (endTime-startTime)/1000));
+    }
+
+    public static List<HashMap<String, Object>> getBeginEndPoints(SimpleFeatureIterator ite){
+        List<HashMap<String, Object>> lstPtObj = new ArrayList<>();
+        try {
+            while (ite.hasNext()){
+                SimpleFeature ft = ite.next();
+                Geometry shape = (Geometry) ft.getDefaultGeometry();
+                if (shape.isEmpty()|| !(shape.isValid())){
+                    continue;
+                }
+
+                int code = Integer.parseInt(ft.getAttribute("CODE").toString());
+                Coordinate[] cds = shape.getCoordinates();
+                HashMap<String, Object> itemB = new HashMap<>();
+                itemB.put("coordinate", cds[0]);
+                itemB.put("code", code);
+                lstPtObj.add(itemB);
+
+                HashMap<String, Object> itemE = new HashMap<>();
+                itemE.put("coordinate", cds[cds.length -1]);
+                itemE.put("code", code);
+                lstPtObj.add(itemE);
+            }
+        }catch (Exception e){
+            e.printStackTrace();
+        }
+        return lstPtObj;
+    }
+
+    /**
+     * 解析Geometry中的坐标点,转成输出格式的路网点
+     */
+    public static void convert2NavPoint(OutputStream out, Coordinate[] cds, int regNum, int code, List<HashMap<String, Object>> lstObj){
+        try {
+            for (int i=0; i<cds.length; i++){
+                Coordinate cd = cds[i];
+                navPointRec rec = new navPointRec();
+                rec.regionNum = regNum;
+                rec.roadNum = code;
+                rec.roadSideNum = 0x00;
+                rec.roadPointNum = i+1;
+                rec.crossFlag = 0x00;
+
+                HashMap<String,Object> obj = new HashMap<>();
+                obj.put("coordinate", cd);
+                obj.put("code", code);
+                if ((i == 0 || i== cds.length -1) && isSamePoint(obj, lstObj)){
+                    rec.crossFlag = 0x01;
+                }
+                rec.borderFlag = 0x00;
+                rec.borderRelNum = 0;
+                rec.longitude = cd.x;
+                rec.latitude = cd.y;
+                rec.altitude = (float) cd.z;
+                if (i == cds.length -1){
+                    // 最后一个点取倒数第二点计算的方向
+                    rec.direction = (float) getAngle(cds[i-1].y, cds[i-1].x, cd.y, cd.x);
+                }else {
+                    rec.direction = (float) getAngle(cd.y, cd.x, cds[i+1].y, cds[i+1].x);
+                }
+
+                byte[] recBuf = byteMergerAll(
+                        LittleByteUtil.getIntBytes(rec.regionNum),
+                        LittleByteUtil.getIntBytes(rec.roadNum),
+                        LittleByteUtil.getbyteBytes(rec.roadSideNum),
+                        LittleByteUtil.getIntBytes(rec.roadPointNum),
+                        LittleByteUtil.getbyteBytes(rec.crossFlag),
+                        LittleByteUtil.getbyteBytes(rec.borderFlag),
+                        LittleByteUtil.getIntBytes(rec.borderRelNum),
+                        LittleByteUtil.getDoubleBytes(rec.longitude),
+                        LittleByteUtil.getDoubleBytes(rec.latitude),
+                        LittleByteUtil.getFloatBytes(rec.altitude),
+                        LittleByteUtil.getFloatBytes(rec.direction));
+
+                out.write(recBuf);
+                System.out.println(String.format("写入point[%d]: %s", i, rec.toString()));
+            }
+        }catch (Exception e){
+            e.printStackTrace();
+        }
+    }
+
+    public static void readBinaryPoints(String flPath){
+        try {
+            int recByteSize = 43;
+            byte[] buf = getBytes4File(flPath);
+            int count = buf.length/recByteSize;
+            for (int i=0; i<count; i++){
+                byte[] rec = getSubBytes(buf, i*recByteSize, recByteSize);
+                navPointRec navPt = new navPointRec();
+                navPt.regionNum = LittleByteUtil.getInt(getSubBytes(rec, 0, 4));
+                navPt.roadNum = LittleByteUtil.getInt(getSubBytes(rec, 4, 4));
+                navPt.roadSideNum = LittleByteUtil.getbyte(getSubBytes(rec, 8, 1));
+                navPt.roadPointNum = LittleByteUtil.getInt(getSubBytes(rec, 9, 4));
+                navPt.crossFlag = LittleByteUtil.getbyte(getSubBytes(rec, 13, 1));
+                navPt.borderFlag = LittleByteUtil.getbyte(getSubBytes(rec, 14, 1));
+                navPt.borderRelNum = LittleByteUtil.getInt(getSubBytes(rec, 15, 4));
+                navPt.longitude = LittleByteUtil.getDouble(getSubBytes(rec, 19, 8));
+                navPt.latitude = LittleByteUtil.getDouble(getSubBytes(rec, 27, 8));
+                navPt.altitude = LittleByteUtil.getFloat(getSubBytes(rec, 35, 4));
+                navPt.direction = LittleByteUtil.getFloat(getSubBytes(rec, 39, 4));
+
+                System.out.println(String.format("读取point[%d]: %s", i, navPt.toString()));
+            }
+        }catch (IOException e){
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * 读取二进制文件并且写入数组里
+     * @param filePath
+     * @return
+     * @throws IOException
+     * @throws FileNotFoundException
+     */
+    public static byte[] getBytes4File(String filePath) throws IOException {
+
+        InputStream in = null;
+        BufferedInputStream buffer = null;
+        DataInputStream dataIn = null;
+        ByteArrayOutputStream bos = null;
+        DataOutputStream dos = null;
+        byte[] bArray = null;
+        try {
+            in = new FileInputStream(filePath);
+            buffer = new BufferedInputStream(in);
+            dataIn = new DataInputStream(buffer);
+            bos = new ByteArrayOutputStream();
+            dos = new DataOutputStream(bos);
+            byte[] buf = new byte[1024];
+            while (true) {
+                int len = dataIn.read(buf);
+                if (len < 0)
+                    break;
+                dos.write(buf, 0, len);
+            }
+            bArray = bos.toByteArray();
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
+        } finally {
+
+            if (in != null)
+                in.close();
+            if (dataIn != null)
+                dataIn.close();
+            if (buffer != null)
+                buffer.close();
+            if (bos != null)
+                bos.close();
+            if (dos != null)
+                dos.close();
+        }
+
+        return bArray;
+    }
+
+    /**
+     * 从一个byte[]数组中截取一部分
+     * @param src
+     * @param begin
+     * @param count
+     * @return
+     */
+    public static byte[] getSubBytes(byte[] src, int begin, int count) {
+        byte[] bs = new byte[count];
+        for (int i=begin;i<begin+count; i++) bs[i-begin] = src[i];
+        return bs;
+    }
+
+    /***
+     * 合并字节数组
+     *
+     * @param a
+     * @return
+     */
+    public static byte[] byteMergerAll(byte[]... a) {
+        // 合并完之后数组的总长度
+        int index = 0;
+        int sum = 0;
+        for (int i = 0; i < a.length; i++) {
+            sum = sum + a[i].length;
+        }
+        byte[] result = new byte[sum];
+        for (int i = 0; i < a.length; i++) {
+            int lengthOne = a[i].length;
+            if (lengthOne == 0) {
+                continue;
+            }
+            // 拷贝数组
+            System.arraycopy(a[i], 0, result, index, lengthOne);
+            index = index + lengthOne;
+        }
+        return result;
+    }
+}

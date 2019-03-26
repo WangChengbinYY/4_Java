@@ -1,0 +1,52 @@
+package com.rs;
+
+import org.json.JSONObject;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
+
+/**
+ * Created by cwj
+ * Date: 2018/8/10 0010
+ * Modified by cwj
+ * Date: 2018/8/10 0010
+ * Abstract:
+ */
+
+public class Main {
+    public static void main(String[] args) {
+
+        /*try{
+            File directory  = new File("");
+            String strCfgPath = directory.getCanonicalPath() + "\\config.json";
+            File fileCfg = new File(strCfgPath);
+            if (!fileCfg.exists())
+                System.out.print("程序启动所需的config.json参数文件不存在!");
+
+            //从JSon文件读取数据
+            StringBuffer stringBuffer = new StringBuffer();
+            String line = null ;
+            BufferedReader br = new BufferedReader(new FileReader(fileCfg));
+            while( (line = br.readLine())!= null ) {
+                stringBuffer.append(line);
+            }
+            br.close();
+
+            JSONObject jsObj = new JSONObject(stringBuffer.toString());
+            String sPath = jsObj.getString("源文件路径");
+            String tPath = jsObj.getString("目标文件路径");
+            String encoding = jsObj.getString("源文件编码");
+            int regionNum = jsObj.getInt("路网区域编号");
+            rsConverter.convertLink2BinaryPoints(sPath, tPath, encoding, regionNum);
+
+            rsConverter.readBinaryPoints(tPath);
+
+        }catch (Exception e){
+            e.printStackTrace();
+
+        }*/
+
+        new Visualize();
+    }
+}
